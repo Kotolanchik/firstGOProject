@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"firstGOProject/internal/user"
 	"firstGOProject/pkg/logging"
 	"fmt"
@@ -31,6 +32,10 @@ func (d *db) FindUser(ctx context.Context, id string) (u user.User, err error) {
 
 	result := d.collection.FindOne(ctx, filter)
 	if result.Err() != nil {
+		if errors.Is(result.Err(), mongo.ErrNoDocuments) {
+
+			return u, fmt.Errorf("ErrEntityNotFound")
+		}
 		return u, fmt.Errorf("failed to find user by id. id: %s. due to error: %v", id, err)
 	}
 
@@ -59,11 +64,58 @@ func (d *db) Create(ctx context.Context, user user.User) (string, error) {
 }
 
 func (d *db) Update(ctx context.Context, user user.User) error {
-	//TODO implement me
-	panic("implement me")
+	objectId, objConvErr := primitive.ObjectIDFromHex(user.Id)
+	if objConvErr != nil {
+		return fmt.Errorf("failed to convert userId to hex, id=%s", user.Id)
+	}
+
+	filter := bson.M{"_id": objectId}
+	userBytes, marshalErr := bson.Marshal(user)
+	if marshalErr != nil {
+		return fmt.Errorf("failed to marshal document user. error: %v", marshalErr)
+	}
+
+	var updateUserObj bson.M
+	unmarshalErr := bson.Unmarshal(userBytes, &updateUserObj)
+	if unmarshalErr != nil {
+		return fmt.Errorf("failed to unmarshal user bytes. error: %v", unmarshalErr)
+	}
+
+	delete(updateUserObj, "_id")
+
+	update := bson.M{
+		"$set": updateUserObj,
+	}
+
+	result, updateErr := d.collection.UpdateOne(ctx, filter, update)
+	if updateErr != nil {
+		return fmt.Errorf("failed to execute update user query. error: %v", updateErr)
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("not found")
+	}
+
+	d.logger.Tracef("Matched: %d, documents and modified: %d", result.MatchedCount, result.ModifiedCount)
+	return nil
 }
 
 func (d *db) Delete(ctx context.Context, id string) error {
-	//TODO implement me
-	panic("implement me")
+	objectId, objConvErr := primitive.ObjectIDFromHex(id)
+	if objConvErr != nil {
+		return fmt.Errorf("failed to convert userId to hex, id=%s", id)
+	}
+
+	filter := bson.M{"_id": objectId}
+	res, deleteErr := d.collection.DeleteOne(ctx, filter)
+	if deleteErr != nil {
+		return fmt.Errorf("failed to execute query, error=%v", deleteErr)
+	}
+
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("not found")
+	}
+	d.logger.Tracef("Deleted: %d documents", res.DeletedCount)
+
+	return nil
 }
